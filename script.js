@@ -1,4 +1,3 @@
-// script.js
 import { app, db } from './firebase-config.js';
 import {
   collection,
@@ -12,7 +11,22 @@ import {
 const servers = {
   iceServers: [
     {
-      urls: ["stun:stun.l.google.com:19302"]
+      urls: "stun:stun.l.google.com:19302"
+    },
+    {
+      urls: "turn:relay.metered.ca:80",
+      username: "openai",
+      credential: "openai123"
+    },
+    {
+      urls: "turn:relay.metered.ca:443",
+      username: "openai",
+      credential: "openai123"
+    },
+    {
+      urls: "turn:relay.metered.ca:443?transport=tcp",
+      username: "openai",
+      credential: "openai123"
     }
   ],
   iceCandidatePoolSize: 10,
@@ -25,15 +39,13 @@ const joinCallBtn = document.getElementById('joinCall');
 const toggleMicBtn = document.getElementById('toggleMic');
 const toggleCamBtn = document.getElementById('toggleCam');
 const endCallBtn = document.getElementById('endCall');
-
 const callIdText = document.getElementById('callIdText');
 const copyCallIdBtn = document.getElementById('copyCallIdBtn');
-let currentCallId = null;
 
 let pc = null;
 let localStream = null;
 let remoteStream = null;
-
+let currentCallId = null;
 let micEnabled = true;
 let camEnabled = true;
 
@@ -43,16 +55,17 @@ async function init() {
 
   pc = new RTCPeerConnection(servers);
 
-  // Add tracks to RTCPeerConnection
-  localStream.getTracks().forEach(track => {
-    pc.addTrack(track, localStream);
-  });
+  // Debugging ICE state
+  pc.oniceconnectionstatechange = () => {
+    console.log("ICE connection state:", pc.iceConnectionState);
+  };
+  pc.onicecandidateerror = e => {
+    console.error("ICE candidate error:", e);
+  };
 
-  // Handle remote tracks
+  localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
   pc.ontrack = event => {
-    event.streams[0].getTracks().forEach(track => {
-      remoteStream.addTrack(track);
-    });
+    event.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
   };
 
   localVideo.srcObject = localStream;
@@ -68,25 +81,11 @@ function enableToggleButtons(enable) {
 }
 
 function updateToggleButtons() {
-  if (micEnabled) {
-    toggleMicBtn.textContent = "Mic On";
-    toggleMicBtn.classList.remove('off');
-    toggleMicBtn.classList.add('on');
-  } else {
-    toggleMicBtn.textContent = "Mic Off";
-    toggleMicBtn.classList.remove('on');
-    toggleMicBtn.classList.add('off');
-  }
+  toggleMicBtn.textContent = micEnabled ? "Mic On" : "Mic Off";
+  toggleMicBtn.className = micEnabled ? "toggle-btn toggle-mic on" : "toggle-btn toggle-mic off";
 
-  if (camEnabled) {
-    toggleCamBtn.textContent = "Cam On";
-    toggleCamBtn.classList.remove('off');
-    toggleCamBtn.classList.add('on');
-  } else {
-    toggleCamBtn.textContent = "Cam Off";
-    toggleCamBtn.classList.remove('on');
-    toggleCamBtn.classList.add('off');
-  }
+  toggleCamBtn.textContent = camEnabled ? "Cam On" : "Cam Off";
+  toggleCamBtn.className = camEnabled ? "toggle-btn toggle-cam on" : "toggle-btn toggle-cam off";
 }
 
 toggleMicBtn.onclick = () => {
@@ -105,7 +104,6 @@ startCallBtn.onclick = async () => {
   startCallBtn.disabled = true;
   joinCallBtn.disabled = true;
   endCallBtn.disabled = false;
-  enableToggleButtons(true);
 
   await init();
 
@@ -122,29 +120,22 @@ startCallBtn.onclick = async () => {
   const offerDescription = await pc.createOffer();
   await pc.setLocalDescription(offerDescription);
 
-  const offer = {
-    sdp: offerDescription.sdp,
-    type: offerDescription.type,
-  };
-  await setDoc(callDoc, { offer });
+  await setDoc(callDoc, { offer: { type: offerDescription.type, sdp: offerDescription.sdp } });
 
-  callIdText.textContent = callDoc.id;
   currentCallId = callDoc.id;
+  callIdText.textContent = currentCallId;
   copyCallIdBtn.disabled = false;
 
-  // Listen for remote answer
   onSnapshot(callDoc, snapshot => {
     const data = snapshot.data();
     if (!pc.currentRemoteDescription && data?.answer) {
-      const answerDescription = new RTCSessionDescription(data.answer);
-      pc.setRemoteDescription(answerDescription);
+      pc.setRemoteDescription(new RTCSessionDescription(data.answer));
     }
   });
 
-  // Listen for remote ICE candidates
   onSnapshot(answerCandidates, snapshot => {
     snapshot.docChanges().forEach(change => {
-      if (change.type === 'added') {
+      if (change.type === "added") {
         const candidate = new RTCIceCandidate(change.doc.data());
         pc.addIceCandidate(candidate);
       }
@@ -159,7 +150,6 @@ joinCallBtn.onclick = async () => {
   startCallBtn.disabled = true;
   joinCallBtn.disabled = true;
   endCallBtn.disabled = false;
-  enableToggleButtons(true);
 
   await init();
 
@@ -174,7 +164,6 @@ joinCallBtn.onclick = async () => {
   };
 
   const callData = (await getDoc(callDoc)).data();
-
   if (!callData) {
     alert("Call ID not found!");
     endCall();
@@ -187,24 +176,19 @@ joinCallBtn.onclick = async () => {
   const answerDescription = await pc.createAnswer();
   await pc.setLocalDescription(answerDescription);
 
-  const answer = {
-    type: answerDescription.type,
-    sdp: answerDescription.sdp,
-  };
-  await updateDoc(callDoc, { answer });
+  await updateDoc(callDoc, { answer: { type: answerDescription.type, sdp: answerDescription.sdp } });
 
-  // Listen for remote ICE candidates
   onSnapshot(offerCandidates, snapshot => {
     snapshot.docChanges().forEach(change => {
-      if (change.type === 'added') {
+      if (change.type === "added") {
         const candidate = new RTCIceCandidate(change.doc.data());
         pc.addIceCandidate(candidate);
       }
     });
   });
 
-  callIdText.textContent = callId;
   currentCallId = callId;
+  callIdText.textContent = callId;
   copyCallIdBtn.disabled = false;
 };
 
@@ -221,32 +205,25 @@ copyCallIdBtn.onclick = async () => {
 };
 
 function endCall() {
-  // Close peer connection
   if (pc) {
     pc.close();
     pc = null;
   }
 
-  // Stop all local media tracks
   if (localStream) {
     localStream.getTracks().forEach(track => track.stop());
     localStream = null;
   }
 
-  // Clear video elements
   localVideo.srcObject = null;
   remoteVideo.srcObject = null;
-
-  // Reset call ID display and variable
-  currentCallId = null;
   callIdText.textContent = '';
+  currentCallId = null;
 
-  // Reset mic and cam buttons
   micEnabled = true;
   camEnabled = true;
   updateToggleButtons();
 
-  // Enable start/join, disable end call and toggles
   startCallBtn.disabled = false;
   joinCallBtn.disabled = false;
   endCallBtn.disabled = true;
